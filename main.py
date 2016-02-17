@@ -6,6 +6,18 @@ import time
 from scipy.stats import *
 
 
+class Node:
+	def __init__(self, parent, location):
+		self.parent = parent
+		self.location = location
+		self.children = []
+
+	def addChild(self, location):
+		child = Node(self, location)
+		self.children.append(child)
+		return child
+
+
 class Rectangle:
 	@staticmethod
 	def create_from_points(top_left, bottom_right):
@@ -29,7 +41,7 @@ class Rectangle:
 			return self.contains_point(item)
 
 	def contains_point(self, p):
-		return (self.top_left[0] < p[0] < self.bottom_right[0]) and (self.top_left[1] < p[1] < self.bottom_right[1])
+		return (self.top_left[0] < p[0] < self.bottom_right[0]) and (self.top_left[1] > p[1] > self.bottom_right[1])
 
 	def contains_rect(self, rect):
 		return self.contains_point(rect.top_left) and self.contains_point(rect.bottom_right)
@@ -73,6 +85,7 @@ def random_point_with_probability(probabilities, options):
 	prob_ravel /= prob_ravel.sum()
 	choice_indices = arange(options.shape[0])
 	choice = random.choice(choice_indices, p=prob_ravel)
+	#choice = random.multinomial(1, prob_ravel, 1)
 	return options[choice]
 
 
@@ -103,8 +116,16 @@ def gaussian(size=50, mean=array([0.0, 0.0]), sigma=array([.25, .25])):
 	return z
 
 
+def draw_all_lines(map, node):
+	for child in node.children:
+		line(map, node.location, child.location, [100, 0, 255], 2)
+		draw_all_lines(map, child)
+
+	return map
+
+
 def main():
-	map_rect = Rectangle(0, 0, 1200, 1080)
+	map_rect = Rectangle(0, 0, 1000, 1000)
 
 	options = zeros((map_rect.height, map_rect.width, 2), dtype=uint32)
 
@@ -116,27 +137,19 @@ def main():
 
 	options = options.reshape((options.shape[0] * options.shape[1], 2))
 
-	#options = options.ravel()
-	# print(options)
-	"""
-	for r in range(options.shape[0]):
-		for c in range(options.shape[1]):
-			options[r, c] = [r, c]
-	"""
-	# map_rect = Rectangle(0, 0, 300, 300)
+
+	start = (50, 50)
+	end = (750, 750)
+	max_segment = 10
+
 	map = zeros((map_rect.height, map_rect.width, 3), dtype=uint8)
+	circle(map, start, 5, (255, 255, 0), 3)
+	circle(map, end, 5, (255, 255, 0), 3)
 
-	start = [50, 50]
-	end = [750, 750]
-	max_segment = 20
+	root = Node(None, start)
+	node_hash = {start:root}
 
-	"""
-	obstacles = [
-		Rectangle(700, 500, 800, 100),
-		Rectangle(100, 500, 400, 100)
-	]
-	"""
-	num_obstacles = 10
+	num_obstacles = 20
 	obstacles = []
 
 	obstacle_hash = zeros(map.shape[:2], dtype=uint8)
@@ -147,13 +160,15 @@ def main():
 			bottom_right = random_point(map_rect)
 			obstacle = Rectangle.create_from_points(top_left, bottom_right)
 
-			if not rect_has_intersection(obstacle_hash, obstacle):
+			if not rect_has_intersection(obstacle_hash, obstacle) and not obstacle.contains_point(start) and not obstacle.contains_point(end):
 				obstacles.append(obstacle)
 				break
 
 		rectangle(obstacle_hash, obstacle.top_left, obstacle.bottom_right, 255, 20)
 		rectangle(obstacle_hash, obstacle.top_left, obstacle.bottom_right, 255, FILLED)
 		rectangle(map, obstacle.top_left, obstacle.bottom_right, [255, 100, 0], 2)
+
+	just_obstacles = map.copy()
 
 	gauss = gaussian(size=map_rect.area / 10000)
 	g_offset = gauss.shape[0] / 2 + max_segment
@@ -165,7 +180,7 @@ def main():
 	tree = kdtree.create([start])
 
 	for i in range(100000):
-		x, y = random_point(map_rect)
+		#x, y = random_point(map_rect)
 		unsearched_probabilities = unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]]
 		x, y = random_point_with_probability(unsearched_probabilities, options)
 
@@ -186,20 +201,45 @@ def main():
 
 		if not line_has_intersection(obstacle_hash, nn_point, new_point):
 			tree.add(new_point)
-			line(map, nn_point, new_point, [100, 0, 255], 2)
+			#line(map, nn_point, new_point, [100, 0, 255], 2)
+
+			parent = node_hash[nn_point]
+			node_hash[new_point] = parent.addChild(new_point)
+
+			distance_to_end = math.sqrt(square(asarray(end) - asarray(new_point)).sum())
+			#print("distance: %d" % distance_to_end)
+			#distance_to_end = math.sqrt((ndarray(end) - ndarray(new_point)) ** 2).sum())
+			#print("distance: %d" % distance_to_end)
+
+			if distance_to_end < 50:
+				end_node = Node(node_hash[new_point], end)
+				node_hash[new_point].children.append(end_node)
+				break
+
 			rect = Rectangle(new_point[0] - gauss.shape[1] / 2, new_point[1] - gauss.shape[0] / 2, gauss.shape[1], gauss.shape[0])
-			#print(rect)
 			unsearched_area[rect.y + g_offset:rect.bottom_right[1] + g_offset, rect.x + g_offset:rect.bottom_right[0] + g_offset] -= gauss
 			unsearched_area = unsearched_area.clip(min=0)
-			#imshow('unsearched', unsearched_area)# /unsearched_area.max())
+			#imshow('unsearched', 1-unsearched_area)# /unsearched_area.max())
 
-		imshow('map', map)
 		if i % 10 == 0:
+			map = draw_all_lines(just_obstacles.copy(), root)
+			imshow('map', map)
 			waitKey(1)
 		# tree.rebalance()
 
 		if i % 100 == 0:
 			tree.rebalance()
+
+	map = draw_all_lines(just_obstacles.copy(), root)
+	current_node = end_node
+	while not current_node.parent is None:
+		line(map, current_node.location, current_node.parent.location, (255, 255, 0), 2)
+		current_node = current_node.parent
+		imshow('map', map)
+		waitKey(50)
+
+	#imshow('map', map)
+	waitKey(0)
 
 
 main()
