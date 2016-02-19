@@ -4,14 +4,19 @@ from numpy import *
 import kdtree
 import time
 from scipy.stats import *
+import glob
+import datetime
 
 
 class Node:
+	node_count = 0
 	def __init__(self, parent, location, cumulative_cost):
 		self.parent = parent
 		self.location = location
 		self.children = []
 		self.cumulative_cost = cumulative_cost
+		self.node_num = Node.node_count
+		Node.node_count += 1
 
 	def addChild(self, location, cumulative_cost):
 		child = Node(self, location, cumulative_cost)
@@ -61,7 +66,7 @@ def line_has_intersection(obstacle_hash, p1, p2):
 def rect_has_intersection(obstacle_hash, rect):
 	rect_hash = zeros(obstacle_hash.shape, dtype=uint8)
 	# line(rect_hash, p1, p2, 255, 2)
-	rectangle(rect_hash, rect.top_left, rect.bottom_right, 255, 20)
+	rectangle(rect_hash, rect.top_left, rect.bottom_right, 255, 20 * 2)
 	rectangle(rect_hash, rect.top_left, rect.bottom_right, 255, FILLED)
 	intersection = bitwise_and(obstacle_hash, rect_hash)
 	return any(intersection)
@@ -111,11 +116,29 @@ def gaussian(size=50, mean=array([0.0, 0.0]), sigma=array([.25, .25])):
 
 
 def draw_all_lines(map, node):
+	circle(map, node.location, 2, [0, 255, 255], 1)
 	for child in node.children:
-		line(map, node.location, child.location, [100, 0, 255], 2)
+		line(map, node.location, child.location, [100, 0, 255], 1)
 		draw_all_lines(map, child)
 
+	putText(map, "%d" % node.cumulative_cost, node.location, FONT_HERSHEY_SIMPLEX, .25, (255, 255, 255))
+
 	return map
+
+
+def update_cumulative_cost(node, new_cumulative_cost):
+	old_cumulative_cost = node.cumulative_cost
+	node.cumulative_cost = new_cumulative_cost
+	for child in node.children:
+		cost_to_parent = child.cumulative_cost - old_cumulative_cost
+		update_cumulative_cost(child, new_cumulative_cost + cost_to_parent)
+
+
+def rewire(new_parent, child, cost_to_parent):
+	child.parent.children.remove(child)
+	new_parent.children.append(child)
+	child.parent = new_parent
+	update_cumulative_cost(child, new_parent.cumulative_cost + cost_to_parent)
 
 
 def main():
@@ -132,9 +155,9 @@ def main():
 	options = options.reshape((options.shape[0] * options.shape[1], 2))
 
 
-	start = (50, 50)
+	start = (100, 100)
 	end = (750, 750)
-	max_segment = 10
+	max_segment = 20
 
 	map = zeros((map_rect.height, map_rect.width, 3), dtype=uint8)
 	circle(map, start, 5, (255, 255, 0), 3)
@@ -143,7 +166,7 @@ def main():
 	root = Node(None, start, 0)
 	node_hash = {start:root}
 
-	num_obstacles = 10
+	num_obstacles = 3
 	obstacles = []
 
 	obstacle_hash = zeros(map.shape[:2], dtype=uint8)
@@ -173,15 +196,20 @@ def main():
 
 	tree = kdtree.create([start])
 
-	for i in range(100000):
-		#x, y = random_point(map_rect)
-		unsearched_probabilities = unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]]
-		x, y = random_point_with_probability(unsearched_probabilities, options)
+	video_filename = "videos/vid%s.avi" % datetime.datetime.now().strftime("%Y_%m_%d_%H-%M-%S")
+	video = VideoWriter(video_filename, VideoWriter_fourcc(*'IYUV'), 10, (map.shape[1], map.shape[0]))
+
+	for i in range(2000):
+		print("\r%4d" % i, end="")
+		x, y = random_point(map_rect)
+		#unsearched_probabilities = unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]]
+		#x, y = random_point_with_probability(unsearched_probabilities, options)
 
 
 		# circle(map, (x, y), 4, [255, 0, 255], 1)
 
 		nn, dist = tree.search_nn((x, y))
+		dist = math.sqrt(dist)
 		xnn, ynn = nn.data
 
 		if dist > max_segment:
@@ -193,14 +221,20 @@ def main():
 		new_point = (x, y)
 		#nn_point = (xnn, ynn)
 
-		neighbors = tree.search_knn(new_point, 5)
+		neighbors = tree.search_knn(new_point, 50)
 		cumulative_costs = []
 		for neighbor, distance in neighbors:
+			#print("1: %s, 2: %s"%(new_point, neighbor.data))
+			#square_dist = ((asarray(new_point) - asarray(neighbor.data)) ** 2).sum()
+			#man_dist = math.sqrt(((asarray(new_point) - asarray(neighbor.data)) ** 2).sum())
+			#print("d1: %d, d2: %d, d3: %d" % (distance, square_dist, man_dist))
+			distance = math.sqrt(distance)
+			distance = distance if distance < max_segment * 3 else 10000
 			cumulative_costs.append(node_hash[neighbor.data].cumulative_cost + distance)
 
 		best_neighbor_index = argmin(cumulative_costs)
 		best_neighbor = node_hash[neighbors[best_neighbor_index][0].data]
-		best_cumulative_cost = neighbors[best_neighbor_index][1]
+		best_cumulative_cost = cumulative_costs[best_neighbor_index]
 
 		neighbors.remove(neighbors[best_neighbor_index])
 
@@ -209,26 +243,38 @@ def main():
 			#line(map, nn_point, new_point, [100, 0, 255], 2)
 
 			#parent = node_hash[nn_point]
-			node_hash[new_point] = best_neighbor.addChild(new_point, best_cumulative_cost)
+			new_node = best_neighbor.addChild(new_point, best_cumulative_cost)
+			node_hash[new_point] = new_node
+
+
+			for neighbor, distance in neighbors:
+				neighbor_node = node_hash[neighbor.data]
+				distance = math.sqrt(distance)
+				if distance < max_segment * 3 and new_node.cumulative_cost + distance < neighbor_node.cumulative_cost:
+					if not line_has_intersection(obstacle_hash, neighbor_node.location, new_node.location):
+						rewire(neighbor_node, new_node, distance)
+
+
+
 
 			distance_to_end = math.sqrt(square(asarray(end) - asarray(new_point)).sum())
-			#print("distance: %d" % distance_to_end)
-			#distance_to_end = math.sqrt((ndarray(end) - ndarray(new_point)) ** 2).sum())
-			#print("distance: %d" % distance_to_end)
 
+			"""
 			if distance_to_end < 50:
 				#end_node = Node(node_hash[new_point], end)
 				end_node = node_hash[new_point].addChild(end, node_hash[new_point].cumulative_cost + distance_to_end)
 				break
+			"""
 
-			rect = Rectangle(new_point[0] - gauss.shape[1] / 2, new_point[1] - gauss.shape[0] / 2, gauss.shape[1], gauss.shape[0])
-			unsearched_area[rect.y + g_offset:rect.bottom_right[1] + g_offset, rect.x + g_offset:rect.bottom_right[0] + g_offset] -= gauss
-			unsearched_area = unsearched_area.clip(min=0)
+			#rect = Rectangle(new_point[0] - gauss.shape[1] / 2, new_point[1] - gauss.shape[0] / 2, gauss.shape[1], gauss.shape[0])
+			#unsearched_area[rect.y + g_offset:rect.bottom_right[1] + g_offset, rect.x + g_offset:rect.bottom_right[0] + g_offset] -= gauss
+			#unsearched_area = unsearched_area.clip(min=0)
 			#imshow('unsearched', 1-unsearched_area)# /unsearched_area.max())
 
-		if i % 10 == 0:
+		if i % 1 == 0:
 			map = draw_all_lines(just_obstacles.copy(), root)
 			imshow('map', map)
+			video.write(map)
 			waitKey(1)
 		# tree.rebalance()
 
@@ -236,15 +282,30 @@ def main():
 			tree.rebalance()
 
 	map = draw_all_lines(just_obstacles.copy(), root)
-	current_node = end_node
+
+	neighbors = tree.search_knn(end, 30)
+	closest_node = None
+	best_cost = inf
+	for neighbor, dist in neighbors:
+		dist = math.sqrt(dist)
+		node = node_hash[neighbor.data]
+		if node.cumulative_cost + dist < best_cost:
+			closest_node = node
+			best_cost = node.cumulative_cost + dist
+
+	current_node = closest_node.addChild(end, 0)
+
 	while not current_node.parent is None:
 		line(map, current_node.location, current_node.parent.location, (255, 255, 0), 2)
 		current_node = current_node.parent
 		imshow('map', map)
+		video.write(map)
 		waitKey(50)
 
 	#imshow('map', map)
 	waitKey(0)
+
+	video.release()
 
 
 main()
