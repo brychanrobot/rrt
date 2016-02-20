@@ -121,7 +121,7 @@ def draw_all_lines(map, node):
 		line(map, node.location, child.location, [100, 0, 255], 1)
 		draw_all_lines(map, child)
 
-	putText(map, "%d" % node.cumulative_cost, node.location, FONT_HERSHEY_SIMPLEX, .25, (255, 255, 255))
+	#putText(map, "%d" % node.cumulative_cost, node.location, FONT_HERSHEY_SIMPLEX, .25, (255, 255, 255))
 
 	return map
 
@@ -166,7 +166,7 @@ def main():
 	root = Node(None, start, 0)
 	node_hash = {start:root}
 
-	num_obstacles = 3
+	num_obstacles = 4
 	obstacles = []
 
 	obstacle_hash = zeros(map.shape[:2], dtype=uint8)
@@ -199,7 +199,7 @@ def main():
 	video_filename = "videos/vid%s.avi" % datetime.datetime.now().strftime("%Y_%m_%d_%H-%M-%S")
 	video = VideoWriter(video_filename, VideoWriter_fourcc(*'IYUV'), 10, (map.shape[1], map.shape[0]))
 
-	for i in range(2000):
+	for i in range(5000):
 		print("\r%4d" % i, end="")
 		x, y = random_point(map_rect)
 		#unsearched_probabilities = unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]]
@@ -250,9 +250,11 @@ def main():
 			for neighbor, distance in neighbors:
 				neighbor_node = node_hash[neighbor.data]
 				distance = math.sqrt(distance)
-				if distance < max_segment * 3 and new_node.cumulative_cost + distance < neighbor_node.cumulative_cost:
+				if distance < max_segment * 3 and (new_node.cumulative_cost + distance) < neighbor_node.cumulative_cost:
 					if not line_has_intersection(obstacle_hash, neighbor_node.location, new_node.location):
-						rewire(neighbor_node, new_node, distance)
+						rewire(new_node, neighbor_node, distance)
+						#print("rewired")
+
 
 
 
@@ -271,7 +273,7 @@ def main():
 			#unsearched_area = unsearched_area.clip(min=0)
 			#imshow('unsearched', 1-unsearched_area)# /unsearched_area.max())
 
-		if i % 1 == 0:
+		if i % 10 == 0:
 			map = draw_all_lines(just_obstacles.copy(), root)
 			imshow('map', map)
 			video.write(map)
@@ -304,6 +306,8 @@ def main():
 
 	#imshow('map', map)
 	waitKey(0)
+
+	video.write(map)
 
 	video.release()
 
