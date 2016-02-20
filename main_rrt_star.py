@@ -116,9 +116,9 @@ def gaussian(size=50, mean=array([0.0, 0.0]), sigma=array([.25, .25])):
 
 
 def draw_all_lines(map, node):
-	circle(map, node.location, 2, [0, 255, 255], 1)
+	circle(map, node.location, 2, [100, 0, 255], 1)
 	for child in node.children:
-		line(map, node.location, child.location, [100, 0, 255], 1)
+		line(map, node.location, child.location, [0, 255, 255], 1)
 		draw_all_lines(map, child)
 
 	#putText(map, "%d" % node.cumulative_cost, node.location, FONT_HERSHEY_SIMPLEX, .25, (255, 255, 255))
