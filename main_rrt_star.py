@@ -6,6 +6,7 @@ import time
 from scipy.stats import *
 import glob
 import datetime
+from screeninfo import get_monitors
 
 
 class Node:
@@ -46,8 +47,9 @@ class Rectangle:
 		if type(item) is tuple:
 			return self.contains_point(item)
 
-	def contains_point(self, p):
-		return (self.top_left[0] < p[0] < self.bottom_right[0]) and (self.top_left[1] > p[1] > self.bottom_right[1])
+	def contains_point(self, p, padding=0):
+		print("p: %s, tl: %s, br: %s" % (p, self.top_left, self.bottom_right))
+		return (self.top_left[0] - padding < p[0] < self.bottom_right[0] + padding) and (self.top_left[1] - padding < p[1] < self.bottom_right[1] + padding)
 
 	def contains_rect(self, rect):
 		return self.contains_point(rect.top_left) and self.contains_point(rect.bottom_right)
@@ -73,10 +75,10 @@ def rect_has_intersection(obstacle_hash, rect):
 
 
 def random_point(bounding_rect):
-	x = random.randint(0, bounding_rect.width - 1)
-	y = random.randint(0, bounding_rect.height - 1)
+	x = random.randint(bounding_rect.x, bounding_rect.bottom_right[0])
+	y = random.randint(bounding_rect.y, bounding_rect.bottom_right[1])
 
-	return (x, y)
+	return x, y
 
 
 def random_point_with_probability(probabilities, options):
@@ -142,174 +144,185 @@ def rewire(new_parent, child, cost_to_parent):
 
 
 def main():
-	map_rect = Rectangle(0, 0, 1000, 1000)
+	while(True):
+		namedWindow('map', WND_PROP_FULLSCREEN)
+		setWindowProperty('map', WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN)
 
-	options = zeros((map_rect.height, map_rect.width, 2), dtype=uint32)
+		monitor = get_monitors()[0]
+		map_rect = Rectangle(0, 0, monitor.width, monitor.height)
+		#map_rect = Rectangle(0, 0, 800, 800)
 
-	row = arange(0, options.shape[1])
-	col = arange(0, options.shape[0])
-	options[:, :, 0] = row
-	for c in row:
-		options[:, c, 1] = col
+		options = zeros((map_rect.height, map_rect.width, 2), dtype=uint32)
 
-	options = options.reshape((options.shape[0] * options.shape[1], 2))
+		row = arange(0, options.shape[1])
+		col = arange(0, options.shape[0])
+		options[:, :, 0] = row
+		for c in row:
+			options[:, c, 1] = col
 
-
-	start = (100, 100)
-	end = (750, 750)
-	max_segment = 20
-
-	map = zeros((map_rect.height, map_rect.width, 3), dtype=uint8)
-	circle(map, start, 5, (255, 255, 0), 3)
-	circle(map, end, 5, (255, 255, 0), 3)
-
-	root = Node(None, start, 0)
-	node_hash = {start:root}
-
-	num_obstacles = 4
-	obstacles = []
-
-	obstacle_hash = zeros(map.shape[:2], dtype=uint8)
-
-	for i in range(num_obstacles):
-		while True:
-			top_left = random_point(map_rect)
-			bottom_right = random_point(map_rect)
-			obstacle = Rectangle.create_from_points(top_left, bottom_right)
-
-			if not rect_has_intersection(obstacle_hash, obstacle) and not obstacle.contains_point(start) and not obstacle.contains_point(end):
-				obstacles.append(obstacle)
-				break
-
-		rectangle(obstacle_hash, obstacle.top_left, obstacle.bottom_right, 255, 20)
-		rectangle(obstacle_hash, obstacle.top_left, obstacle.bottom_right, 255, FILLED)
-		rectangle(map, obstacle.top_left, obstacle.bottom_right, [255, 100, 0], 2)
-
-	just_obstacles = map.copy()
-
-	gauss = gaussian(size=map_rect.area / 10000)
-	g_offset = gauss.shape[0] / 2 + max_segment
-	unsearched_area = ones((map.shape[0] + 2 * g_offset, map.shape[1] + 2 * g_offset), dtype=float64)
-	unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]] -= obstacle_hash / 255
-
-	# imshow('obstacles', obstacle_hash)
-
-	tree = kdtree.create([start])
-
-	video_filename = "videos/vid%s.avi" % datetime.datetime.now().strftime("%Y_%m_%d_%H-%M-%S")
-	video = VideoWriter(video_filename, VideoWriter_fourcc(*'IYUV'), 10, (map.shape[1], map.shape[0]))
-
-	for i in range(5000):
-		print("\r%4d" % i, end="")
-		x, y = random_point(map_rect)
-		#unsearched_probabilities = unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]]
-		#x, y = random_point_with_probability(unsearched_probabilities, options)
+		options = options.reshape((options.shape[0] * options.shape[1], 2))
 
 
-		# circle(map, (x, y), 4, [255, 0, 255], 1)
+		#start = (100, 100)
+		#end = (750, 750)
+		start = random_point(map_rect)
+		end = random_point(map_rect)
+		max_segment = 20
 
-		nn, dist = tree.search_nn((x, y))
-		dist = math.sqrt(dist)
-		xnn, ynn = nn.data
+		map = zeros((map_rect.height, map_rect.width, 3), dtype=uint8)
+		circle(map, start, 5, (10, 255, 10), 3)
+		circle(map, end, 5, (100, 100, 255), 3)
 
-		if dist > max_segment:
-			angle = math.atan2((xnn - x), (y - ynn)) + pi / 2.0
-			# print(angle * 180 / math.pi)
-			x = int(max_segment * cos(angle) + xnn)
-			y = int(max_segment * sin(angle) + ynn)
+		root = Node(None, start, 0)
+		node_hash = {start:root}
 
-		new_point = (x, y)
-		#nn_point = (xnn, ynn)
+		num_obstacles = 12
+		obstacles = []
 
-		neighbors = tree.search_knn(new_point, 50)
-		cumulative_costs = []
-		for neighbor, distance in neighbors:
-			#print("1: %s, 2: %s"%(new_point, neighbor.data))
-			#square_dist = ((asarray(new_point) - asarray(neighbor.data)) ** 2).sum()
-			#man_dist = math.sqrt(((asarray(new_point) - asarray(neighbor.data)) ** 2).sum())
-			#print("d1: %d, d2: %d, d3: %d" % (distance, square_dist, man_dist))
-			distance = math.sqrt(distance)
-			distance = distance if distance < max_segment * 3 else 10000
-			cumulative_costs.append(node_hash[neighbor.data].cumulative_cost + distance)
+		obstacle_hash = zeros(map.shape[:2], dtype=uint8)
 
-		best_neighbor_index = argmin(cumulative_costs)
-		best_neighbor = node_hash[neighbors[best_neighbor_index][0].data]
-		best_cumulative_cost = cumulative_costs[best_neighbor_index]
+		for i in range(num_obstacles):
+			while True:
+				top_left = random_point(map_rect)
+				bottom_right = random_point(Rectangle.create_from_points(top_left, map_rect.bottom_right))
+				obstacle = Rectangle.create_from_points(top_left, bottom_right)
 
-		neighbors.remove(neighbors[best_neighbor_index])
+				if not rect_has_intersection(obstacle_hash, obstacle) and not obstacle.contains_point(start, 20) and not obstacle.contains_point(end, 20):
+					obstacles.append(obstacle)
+					break
 
-		if not line_has_intersection(obstacle_hash, best_neighbor.location, new_point):
-			tree.add(new_point)
-			#line(map, nn_point, new_point, [100, 0, 255], 2)
+			rectangle(obstacle_hash, obstacle.top_left, obstacle.bottom_right, 255, 20)
+			rectangle(obstacle_hash, obstacle.top_left, obstacle.bottom_right, 255, FILLED)
+			rectangle(map, obstacle.top_left, obstacle.bottom_right, [255, 100, 0], 2)
 
-			#parent = node_hash[nn_point]
-			new_node = best_neighbor.addChild(new_point, best_cumulative_cost)
-			node_hash[new_point] = new_node
+		just_obstacles = map.copy()
+
+		gauss = gaussian(size=map_rect.area / 10000)
+		g_offset = gauss.shape[0] / 2 + max_segment
+		unsearched_area = ones((map.shape[0] + 2 * g_offset, map.shape[1] + 2 * g_offset), dtype=float64)
+		unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]] -= obstacle_hash / 255
+
+		# imshow('obstacles', obstacle_hash)
+
+		tree = kdtree.create([start])
+
+		video_filename = "videos/vid%s.avi" % datetime.datetime.now().strftime("%Y_%m_%d_%H-%M-%S")
+		video = VideoWriter(video_filename, VideoWriter_fourcc(*'IYUV'), 60, (map.shape[1], map.shape[0]))
+
+		for i in range(3000):
+			print("\r%4d" % i, end="")
+			x, y = random_point(map_rect)
+			#unsearched_probabilities = unsearched_area[g_offset:g_offset + map.shape[0], g_offset:g_offset + map.shape[1]]
+			#x, y = random_point_with_probability(unsearched_probabilities, options)
 
 
+			# circle(map, (x, y), 4, [255, 0, 255], 1)
+
+			nn, dist = tree.search_nn((x, y))
+			dist = math.sqrt(dist)
+			xnn, ynn = nn.data
+
+			if dist > max_segment:
+				angle = math.atan2((xnn - x), (y - ynn)) + pi / 2.0
+				# print(angle * 180 / math.pi)
+				x = int(max_segment * cos(angle) + xnn)
+				y = int(max_segment * sin(angle) + ynn)
+
+			new_point = (x, y)
+			#nn_point = (xnn, ynn)
+
+			neighbors = tree.search_knn(new_point, 50)
+			cumulative_costs = []
 			for neighbor, distance in neighbors:
-				neighbor_node = node_hash[neighbor.data]
+				#print("1: %s, 2: %s"%(new_point, neighbor.data))
+				#square_dist = ((asarray(new_point) - asarray(neighbor.data)) ** 2).sum()
+				#man_dist = math.sqrt(((asarray(new_point) - asarray(neighbor.data)) ** 2).sum())
+				#print("d1: %d, d2: %d, d3: %d" % (distance, square_dist, man_dist))
 				distance = math.sqrt(distance)
-				if distance < max_segment * 3 and (new_node.cumulative_cost + distance) < neighbor_node.cumulative_cost:
-					if not line_has_intersection(obstacle_hash, neighbor_node.location, new_node.location):
-						rewire(new_node, neighbor_node, distance)
-						#print("rewired")
+				distance = distance if distance < max_segment * 3 else 10000
+				cumulative_costs.append(node_hash[neighbor.data].cumulative_cost + distance)
+
+			best_neighbor_index = argmin(cumulative_costs)
+			best_neighbor = node_hash[neighbors[best_neighbor_index][0].data]
+			best_cumulative_cost = cumulative_costs[best_neighbor_index]
+
+			neighbors.remove(neighbors[best_neighbor_index])
+
+			if not line_has_intersection(obstacle_hash, best_neighbor.location, new_point):
+				tree.add(new_point)
+				#line(map, nn_point, new_point, [100, 0, 255], 2)
+
+				#parent = node_hash[nn_point]
+				new_node = best_neighbor.addChild(new_point, best_cumulative_cost)
+				node_hash[new_point] = new_node
+
+
+				for neighbor, distance in neighbors:
+					neighbor_node = node_hash[neighbor.data]
+					distance = math.sqrt(distance)
+					if distance < max_segment * 3 and (new_node.cumulative_cost + distance) < neighbor_node.cumulative_cost:
+						if not line_has_intersection(obstacle_hash, neighbor_node.location, new_node.location):
+							rewire(new_node, neighbor_node, distance)
+							#print("rewired")
 
 
 
 
 
-			distance_to_end = math.sqrt(square(asarray(end) - asarray(new_point)).sum())
+				distance_to_end = math.sqrt(square(asarray(end) - asarray(new_point)).sum())
 
-			"""
-			if distance_to_end < 50:
-				#end_node = Node(node_hash[new_point], end)
-				end_node = node_hash[new_point].addChild(end, node_hash[new_point].cumulative_cost + distance_to_end)
-				break
-			"""
+				"""
+				if distance_to_end < 50:
+					#end_node = Node(node_hash[new_point], end)
+					end_node = node_hash[new_point].addChild(end, node_hash[new_point].cumulative_cost + distance_to_end)
+					break
+				"""
 
-			#rect = Rectangle(new_point[0] - gauss.shape[1] / 2, new_point[1] - gauss.shape[0] / 2, gauss.shape[1], gauss.shape[0])
-			#unsearched_area[rect.y + g_offset:rect.bottom_right[1] + g_offset, rect.x + g_offset:rect.bottom_right[0] + g_offset] -= gauss
-			#unsearched_area = unsearched_area.clip(min=0)
-			#imshow('unsearched', 1-unsearched_area)# /unsearched_area.max())
+				#rect = Rectangle(new_point[0] - gauss.shape[1] / 2, new_point[1] - gauss.shape[0] / 2, gauss.shape[1], gauss.shape[0])
+				#unsearched_area[rect.y + g_offset:rect.bottom_right[1] + g_offset, rect.x + g_offset:rect.bottom_right[0] + g_offset] -= gauss
+				#unsearched_area = unsearched_area.clip(min=0)
+				#imshow('unsearched', 1-unsearched_area)# /unsearched_area.max())
 
-		if i % 10 == 0:
-			map = draw_all_lines(just_obstacles.copy(), root)
+			if i % 1 == 0:
+				map = draw_all_lines(just_obstacles.copy(), root)
+				putText(map, "Iteration: %d" % i, (20, 20), FONT_HERSHEY_SIMPLEX, .7, (50, 255, 50))
+				imshow('map', map)
+				video.write(map)
+				waitKey(1)
+			# tree.rebalance()
+
+			if i % 100 == 0:
+				tree.rebalance()
+
+		map = draw_all_lines(just_obstacles.copy(), root)
+
+		neighbors = tree.search_knn(end, 30)
+		closest_node = None
+		best_cost = inf
+		for neighbor, dist in neighbors:
+			dist = math.sqrt(dist)
+			node = node_hash[neighbor.data]
+			if node.cumulative_cost + dist < best_cost:
+				closest_node = node
+				best_cost = node.cumulative_cost + dist
+
+		current_node = closest_node.addChild(end, 0)
+
+		while not current_node.parent is None:
+			line(map, current_node.location, current_node.parent.location, (255, 255, 0), 2)
+			current_node = current_node.parent
 			imshow('map', map)
 			video.write(map)
-			waitKey(1)
-		# tree.rebalance()
+			waitKey(50)
 
-		if i % 100 == 0:
-			tree.rebalance()
+		#imshow('map', map)
+		#waitKey(0)
 
-	map = draw_all_lines(just_obstacles.copy(), root)
-
-	neighbors = tree.search_knn(end, 30)
-	closest_node = None
-	best_cost = inf
-	for neighbor, dist in neighbors:
-		dist = math.sqrt(dist)
-		node = node_hash[neighbor.data]
-		if node.cumulative_cost + dist < best_cost:
-			closest_node = node
-			best_cost = node.cumulative_cost + dist
-
-	current_node = closest_node.addChild(end, 0)
-
-	while not current_node.parent is None:
-		line(map, current_node.location, current_node.parent.location, (255, 255, 0), 2)
-		current_node = current_node.parent
-		imshow('map', map)
 		video.write(map)
-		waitKey(50)
 
-	#imshow('map', map)
-	waitKey(0)
+		video.release()
 
-	video.write(map)
-
-	video.release()
+		time.sleep(2)
 
 
 main()
